@@ -7,7 +7,11 @@ from simulation import Simulation
 def main():
     car=Car("CAR001",(10, 5))
     rider=Rider("Rider_A", (1, 2), (20, 15))
-    sim = Simulation()
+    sim = Simulation("map.csv")
+    print("Loaded Map: ")
+    print(sim.map)
+    print()
+    
 
     sim.cars[car.id] = car
     sim.riders[rider.id] = rider
