@@ -1,3 +1,5 @@
+from pathfinding import find_shortest_path
+
 class Car:
     """
     Represents a single car in the ride-sharing simulation
@@ -9,7 +11,7 @@ class Car:
 
         Args:
             car_id(str): The unique identifier for the car.
-            initial_location(tuple): The starting (x,y) coords.
+            initial_location(str): The node identifier where the car starts
         """
 
         self.id = car_id
@@ -20,4 +22,9 @@ class Car:
 
     def __str__(self):
       return f"Car{self.id} at {self.location} - Status: {self.status}"
+
+    def calculate_route(self, destination, graph):
+        path, total_cost = find_shortest_path(graph, self.location, destination)
+        self.route = path
+        self.route_time = total_cost
 
