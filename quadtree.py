@@ -10,7 +10,7 @@ class Point:
         self.data = data
 
     def __repr__(self):
-        return f"Point ({self.x:2f}, {self.y:2f}, data={self.data})"
+        return f"Point ({self.x:.2f}, {self.y:.2f}, data={self.data})"
 
 # Class for the Rectangle where (x, y) is the top-left corner
 class Rectangle:
@@ -18,7 +18,7 @@ class Rectangle:
         self.x = x
         self.y = y
         self.width = width
-        self. height = height
+        self.height = height
 
     def contains(self, point):
         return(self.x <= point.x <= self.x + self.width and
@@ -79,7 +79,7 @@ class QuadtreeNode:
 
     def find_nearest(self, query_point, best=None):
         if best is None:
-            best = {"Point": None, "distance": float("inf")}
+            best = {"point": None, "distance": float("inf")}
 
         #Prune if closes possible point in region is further than point already found. Skips whole branch
         if self.boundary.distance_to_point(query_point) > best["distance"]:
@@ -112,5 +112,3 @@ class Quadtree:
 
     def find_nearest(self, query_point):
         return self.root.find_nearest(query_point)["point"]
-
-
