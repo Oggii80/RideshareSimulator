@@ -38,6 +38,7 @@ def main():
 
     print("\n--- SIMULATION START ---")
     sim.run()
+    sim.analyze_results()
     print("--- SIMULATION END ---")
 
 
