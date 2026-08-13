@@ -28,4 +28,3 @@ class Car:
         path, total_cost = find_shortest_path(graph, self.location, destination)
         self.route = path
         self.route_time = total_cost
-
