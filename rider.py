@@ -9,7 +9,7 @@ class Rider:
         self.start_location=pickup_location
         self.destination=dropoff_location
         self.status="waiting"
-        self.request_time=0
+        self.request_time=request_time
         self.pickup_time=0
         self.dropoff_time=0
 
