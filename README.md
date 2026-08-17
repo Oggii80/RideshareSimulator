@@ -1,68 +1,153 @@
-A ride-sharing simulation built around object-oriented design and graph-based pathfinding. Cars and riders exist in a weighted road network, and cars can calculate the fastest route between any two locations using Dijkstra's algorithm.
+# Efficient, Analyzed Ride-Sharing Simulator
 
-Purpose / Design
+A discrete-event ride-sharing simulation. Riders arrive dynamically on a road
+network; each is matched to a car using a two-stage search — a Quadtree finds
+the geographically nearest available cars, and Dijkstra's algorithm picks the
+one with the shortest actual road-network travel time. The run produces a
+metrics summary and an integrated analytical image.
 
-The project is organized around three core classes — Car, Rider, and Simulation — each in its own module, to keep state and behavior encapsulated and the codebase modular. The road network is represented by a Graph class using an adjacency list.
+## Components
 
-The Simulation class stores its Car and Rider objects in dictionaries keyed by ID, chosen to support O(1) lookups when driver-matching logic is added in later milestones.
+- **Graph** (`graph.py`) — road topology (weighted adjacency list) plus node
+  geometry (`node_coordinates`), loaded from one unified map file.
+- **Quadtree** (`quadtree.py`) — spatial index of available cars; returns up to
+  *k* nearest candidates and supports identity-based removal.
+- **Dijkstra** (`pathfinding.py`) — shortest road route and travel time.
+- **Simulation** (`simulation.py`) — the event engine, availability index,
+  rider generation, matching pipeline, and metrics.
+- **Visualization** (`visualization.py`) — builds `simulation_summary.png`.
 
-With this milestone, cars are no longer just placed in the world — they can navigate it. Each Car can compute the optimal route from its current location to a destination and remember that plan.
+## Installation
 
-Pathfinding
+Requires Python 3. The simulation core uses only the standard library. The PNG
+visualization requires matplotlib:
 
-Route-finding is implemented in pathfinding.py as a standalone function:
+    pip install matplotlib
 
-find_shortest_path(graph, start_node, end_node)
+Run the simulation with `--no-plot` to skip the image and avoid the matplotlib
+dependency entirely.
 
-It implements Dijkstra's algorithm to find the lowest-cost route through the weighted graph. It returns a tuple of the path (a list of nodes) and the total travel cost — for example (['A', 'C', 'D'], 4). If no route exists between the two nodes, it returns (None, float('inf')).
+## Running the simulation
 
-The algorithm uses a min-heap priority queue (Python's heapq) to decide which node to visit next. The heap always hands back the unvisited node with the smallest known distance from the start, which is what keeps Dijkstra efficient — the algorithm never wastes work exploring a longer route when a shorter one is still pending. Because heapq has no operation to update an entry already in the queue, a shorter path to an already-queued node is handled by pushing a second entry and discarding the outdated one when it surfaces.
+    python simulation.py --num-cars 15 --num-riders 250 --max-time 1000 \
+        --mean-arrival 0.8 --random-seed 42
 
-The path itself is reconstructed from a predecessors dictionary that records, for each node, which node it was reached from on the shortest path. Once the destination is reached, the path is rebuilt by walking predecessors backward from the destination to the start and then reversing the result.
+### Command-line options
 
-Integration with the Car class
+| Option | Default | Meaning |
+|---|---|---|
+| `--map-file` | `city_map.csv` | Map to load. |
+| `--num-cars` | 100 | Fleet size. |
+| `--num-riders` | 200 | Cap on riders generated. |
+| `--max-time` | 1000.0 | Stop generating new riders past this time. |
+| `--candidate-count` | 5 | *k* — geographic candidates per request. |
+| `--mean-arrival` | 2.0 | Mean inter-arrival gap (exponential). |
+| `--random-seed` | none | Seed for reproducible runs. |
+| `--output` | `simulation_summary.png` | Image path. |
+| `--no-plot` | off | Metrics only, no image. |
 
-Pathfinding is wired into the Car class through a method:
+Rider generation stops when **either** `--num-riders` or `--max-time` is
+reached. Trips already in progress continue to completion after generation
+stops — the main loop runs until the event heap is empty, so no active trip is
+abandoned.
 
-Car.calculate_route(destination, graph)
+## Map-file format
 
-This method calls find_shortest_path, using the car's current self.location as the start node and the passed-in destination as the end node. It stores the results on the car as self.route and self.route_time, so the car "remembers" its planned route. The method calls the shared find_shortest_path function rather than reimplementing the algorithm, keeping a single tested implementation of the pathfinding logic.
+Each non-comment row is one road with seven fields:
 
-Map File Format
+    start_node_id,start_x,start_y,end_node_id,end_x,end_y,weight
 
-The road network is loaded from map.csv. Each line is a single directed edge:
+Roads are stored in both directions, so the network behaves as undirected. Lines
+beginning with `#` and blank lines are ignored. `make_map.py` generates a grid
+map: `python make_map.py --cols 10 --rows 10 --spacing 100 --out city_map.csv`.
 
-start_node,end_node,weight
+## Event model
 
-For example:
+The event heap holds four-field tuples:
 
-A,B,5
-B,A,5
-A,C,3
-C,A,3
+    (timestamp, sequence_number, event_type, data)
 
-Each connection is listed in both directions so the network behaves as an undirected road map (a road from A to B is also a road from B to A).
+The sequence number (from `itertools.count()`) is a strictly increasing
+tie-breaker, so two events sharing a timestamp are ordered by insertion and the
+heap never falls through to comparing `Car`/`Rider` objects. Event types:
+`RIDER_REQUEST`, `PICKUP_ARRIVAL`, `DROPOFF_ARRIVAL`.
 
-How to Run
+## State transitions
 
-Requires Python 3 (python --version to check).
+    Car:   available -> en_route_to_pickup -> en_route_to_destination -> available
+    Rider: waiting -> in_car -> completed
 
-Clone the repository and navigate into the project directory.
+A rider that cannot be matched is marked `unmatched`; a trip whose destination
+is unreachable is marked `unsuccessful`.
 
-Run the pathfinding test in isolation:
+## Matching workflow (Quadtree -> Dijkstra)
 
-python test_dijkstra.py
+1. Build a query point from the rider's start location.
+2. `find_k_nearest(query_point, k=candidate_count)` returns up to *k* nearest
+   available cars by straight-line geography. Default *k* is 5
+   (`DEFAULT_CANDIDATE_COUNT`); change it with `--candidate-count`.
+3. Snap the rider's start to a graph vertex once, then run Dijkstra from every
+   candidate to that vertex.
+4. Select the reachable candidate with the smallest road-network travel time.
+   Ties go to the nearer (earlier-returned) candidate. Geography proposes; road
+   distance decides. Pickup and trip times always come from Dijkstra, never a
+   straight-line placeholder.
 
-This loads the graph from map.csv, runs find_shortest_path on a known route (A to D) and on an impossible route (A to Z), and prints the results, verifying both the shortest-path logic and the no-path case.
+## Availability synchronization
 
-Run the object-structure demo:
+Three structures track available cars and must always agree:
 
-python test_script.py
+- `available_cars` — `car_id -> Car`.
+- `available_car_points` — `car_id -> the exact Point` stored in the tree.
+- `available_car_quadtree` — the spatial index.
 
-This instantiates a Car, a Rider, and a Simulation, registers the objects with the simulation, and prints each one to demonstrate the class structure.
+All changes go through two methods. `add_available_car` inserts into the tree
+first and touches the dictionaries only on success, so a boundary rejection
+leaves nothing half-registered. `remove_available_car` removes the exact stored
+`Point` from the tree first and mutates the dictionaries only after; if the tree
+removal fails it raises rather than letting the structures drift. This preserves:
 
-The scripts locate map.csv relative to their own file location, so they can be run from any working directory.
+    set(available_cars) == set(available_car_points) == cars indexed in the quadtree
 
-Dependencies
+A dispatched car is removed immediately and stays absent through pickup and the
+passenger trip; on drop-off it is reinserted at its **new** location with a fresh
+`Point`.
 
-None beyond the Python standard library. The project uses only heapq and os, both of which ship with Python — nothing to install.
+## Unavailable cars and unreachable routes
+
+- **No available cars / all candidates unreachable:** the rider is marked
+  `unmatched` and counted; no waiting queue is used.
+- **Unreachable destination at pickup:** the trip is marked `unsuccessful` and
+  counted, the car's elapsed busy time is banked, its rider is cleared, and it is
+  returned to availability at the pickup location. No event is ever scheduled at
+  `float("inf")`.
+
+## Reported metrics
+
+- **Total riders generated** — requests created.
+- **Total completed** — trips that reached drop-off.
+- **Total unmatched/unsuccessful** — requests with no car or no route.
+- **Average wait time** — mean of `pickup_time - request_time` over completed trips.
+- **Average trip duration** — mean of `dropoff_time - pickup_time` over completed trips.
+- **Driver utilization** — total busy time across all cars divided by
+  (number of cars x simulation span), where the span is the final processed event
+  time. Busy time runs from dispatch through drop-off.
+- **Trips per car** — completed trips divided by fleet size.
+
+## Analytical visualization
+
+`simulation_summary.png` combines three things in one image: a map of the road
+network with the final position of every car (colored by trips completed), a
+panel of the KPIs above, and two charts — the rider wait-time distribution and a
+completed-vs-unmatched outcome bar.
+
+## Running the tests
+
+    python test_dijkstra.py      # shortest path + no-route contract
+    python test_quadtree.py      # find_k_nearest vs brute force; identity removal
+    python test_simulation.py    # end-to-end invariants and correctness checks
+
+`test_simulation.py` drives the event loop manually and asserts, after every
+event, that the availability invariant holds and that no busy car remains in the
+index. It also checks same-timestamp determinism, the no-cars and fewer-than-*k*
+cases, and that dispatch times come from Dijkstra.
