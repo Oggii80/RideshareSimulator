@@ -1,30 +1,26 @@
 from pathfinding import find_shortest_path
+from graph import find_nearest_vertex
+
 
 class Car:
-    """
-    Represents a single car in the ride-sharing simulation
-    """
-
     def __init__(self, car_id, initial_location):
-        """
-        Initialized a new Car object/
-
-        Args:
-            car_id(str): The unique identifier for the car.
-            initial_location : Now an (x, y) coordinate
-        """
-
         self.id = car_id
         self.location = initial_location
-        self.status = 'available'
-        self.passengers = []
+        self.status = "available"
         self.assigned_rider = None
-        print(f"Car {self.id} created at location {self.location}.")
+        self.route = None
+        self.route_time = 0
+        self.busy_start_time = None
+        self.total_busy_time = 0
+        self.trips_completed = 0
 
     def __str__(self):
-      return f"Car{self.id} at {self.location} - Status: {self.status}"
+        return f"Car {self.id} at {self.location} - Status: {self.status}"
 
     def calculate_route(self, destination, graph):
-        path, total_cost = find_shortest_path(graph, self.location, destination)
+        start_vertex = find_nearest_vertex(self.location, graph.node_coordinates)
+        end_vertex = find_nearest_vertex(destination, graph.node_coordinates)
+        path, total_cost = find_shortest_path(graph, start_vertex, end_vertex)
         self.route = path
         self.route_time = total_cost
+        return path, total_cost
