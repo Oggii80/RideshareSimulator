@@ -1,4 +1,4 @@
-#graph.py
+"""City map: weighted road topology plus the (x, y) geometry of each node."""
 
 import collections
 
