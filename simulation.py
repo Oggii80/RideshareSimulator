@@ -19,6 +19,7 @@ from rider import Rider
 
 DEFAULT_CANDIDATE_COUNT = 5
 DEFAULT_MEAN_ARRIVAL_TIME = 2.0
+BASE_FARE = 5.0
 
 
 class Simulation:
@@ -26,7 +27,10 @@ class Simulation:
                  candidate_count=DEFAULT_CANDIDATE_COUNT,
                  max_time=1000.0, num_riders=200,
                  mean_arrival_time=DEFAULT_MEAN_ARRIVAL_TIME,
-                 random_seed=None):
+                 random_seed=None, verbose=True,
+                 surge_enabled=False, surge_zones=4,
+                 surge_sensitivity=0.1, surge_cap=3.0):
+        self.verbose = verbose
         self.trip_log = []
         self.cars = {}
         self.riders = {}
@@ -53,6 +57,19 @@ class Simulation:
         self.available_car_points = {}
         self.available_car_quadtree = Quadtree(boundary, capacity=4)
 
+        # ----- surge pricing (extra credit; inert unless enabled) -----
+        self.surge_enabled = surge_enabled
+        self.surge_zones = surge_zones
+        self.surge_sensitivity = surge_sensitivity
+        self.surge_cap = surge_cap
+        self.zone_request_counts = {}
+        self.surge_samples = []          # multiplier applied to each dispatched trip
+        self.fare_samples = []
+        span_x = (self.max_x - self.min_x) or 1.0
+        span_y = (self.max_y - self.min_y) or 1.0
+        self.zone_width = span_x / self.surge_zones
+        self.zone_height = span_y / self.surge_zones
+
         # Event engine state.
         self.events = []
         self.current_time = 0.0
@@ -72,6 +89,11 @@ class Simulation:
         self._rider_counter = count()
 
         self.initialize_cars(num_cars)
+
+    def _log(self, message):
+        # Chronological event log; silence with --quiet for analysis-only output.
+        if self.verbose:
+            print(message)
 
     # ----- scheduling -----
     def _schedule(self, timestamp, event_type, data):
@@ -107,6 +129,31 @@ class Simulation:
 
         del self.available_car_points[car.id]
         del self.available_cars[car.id]
+
+    # ----- surge pricing -----
+    def _zone_of(self, location):
+        # Map an (x, y) location to an integer (col, row) zone, clamped to range.
+        col = int((location[0] - self.min_x) / self.zone_width)
+        row = int((location[1] - self.min_y) / self.zone_height)
+        col = min(max(col, 0), self.surge_zones - 1)
+        row = min(max(row, 0), self.surge_zones - 1)
+        return (col, row)
+
+    def _available_drivers_in_zone(self, zone):
+        # Count currently-available cars whose location falls in the zone.
+        count = 0
+        for car in self.available_cars.values():
+            if self._zone_of(car.location) == zone:
+                count += 1
+        return count
+
+    def _surge_multiplier(self, zone):
+        # Demand-to-supply ratio for the zone: requests seen vs drivers free now.
+        requests = self.zone_request_counts.get(zone, 0)
+        drivers = self._available_drivers_in_zone(zone)
+        ratio = requests / (drivers + 1)
+        multiplier = 1.0 + self.surge_sensitivity * ratio
+        return min(multiplier, self.surge_cap)
 
     # ----- setup -----
     def initialize_cars(self, num_cars):
@@ -180,13 +227,25 @@ class Simulation:
         if rider.request_time is None:
             rider.request_time = self.current_time
 
+        # Surge is priced from the origin zone's demand/supply at request time.
+        multiplier = 1.0
+        if self.surge_enabled:
+            zone = self._zone_of(rider.start_location)
+            self.zone_request_counts[zone] = self.zone_request_counts.get(zone, 0) + 1
+            multiplier = self._surge_multiplier(zone)
+            rider.surge_multiplier = multiplier
+
         best_car, best_route, best_time = self._best_candidate(rider)
 
         if best_car is None:
             rider.status = "unmatched"
             self.unmatched_count += 1
-            print(f"TIME {self.current_time:.1f}: no car for {rider.id}")
+            self._log(f"TIME {self.current_time:.1f}: no car for {rider.id}")
         else:
+            if self.surge_enabled:
+                rider.fare = round(BASE_FARE * multiplier, 2)
+                self.surge_samples.append(multiplier)
+                self.fare_samples.append(rider.fare)
             self.remove_available_car(best_car)
             best_car.status = "en_route_to_pickup"
             best_car.assigned_rider = rider
@@ -195,7 +254,7 @@ class Simulation:
             best_car.busy_start_time = self.current_time
             rider.status = "waiting"
             self._schedule(self.current_time + best_time, "PICKUP_ARRIVAL", best_car)
-            print(f"TIME {self.current_time:.1f}: {best_car.id} -> {rider.id}")
+            self._log(f"TIME {self.current_time:.1f}: {best_car.id} -> {rider.id}")
 
         # Always keep the request stream alive, matched or not.
         self._schedule_next_request()
@@ -225,13 +284,13 @@ class Simulation:
             car.total_busy_time += self.current_time - car.busy_start_time
             car.assigned_rider = None
             self.add_available_car(car)
-            print(f"TIME {self.current_time:.1f}: {rider.id} unreachable; {car.id} freed")
+            self._log(f"TIME {self.current_time:.1f}: {rider.id} unreachable; {car.id} freed")
             return
 
         car.route = route
         car.route_time = trip_time
         self._schedule(self.current_time + trip_time, "DROPOFF_ARRIVAL", car)
-        print(f"TIME {self.current_time:.1f}: {car.id} picked up {rider.id}")
+        self._log(f"TIME {self.current_time:.1f}: {car.id} picked up {rider.id}")
 
     def handle_dropoff_arrival(self, car):
         rider = car.assigned_rider
@@ -248,7 +307,7 @@ class Simulation:
         car.trips_completed += 1
 
         self.add_available_car(car)
-        print(f"TIME {self.current_time:.1f}: {car.id} dropped off {rider.id}")
+        self._log(f"TIME {self.current_time:.1f}: {car.id} dropped off {rider.id}")
 
     # ----- main loop -----
     def run(self):
@@ -319,6 +378,20 @@ class Simulation:
         print(f"Avg trip duration:      {results['average_trip_duration']:.2f}")
         print(f"Driver utilization:     {results['driver_utilization_percent']:.2f}%")
         print(f"Trips per car:          {results['trips_per_car']:.2f}")
+
+        if self.surge_enabled:
+            avg_surge = (sum(self.surge_samples) / len(self.surge_samples)
+                         if self.surge_samples else 0.0)
+            max_surge = max(self.surge_samples) if self.surge_samples else 0.0
+            avg_fare = (sum(self.fare_samples) / len(self.fare_samples)
+                        if self.fare_samples else 0.0)
+            results["average_surge_multiplier"] = avg_surge
+            results["max_surge_multiplier"] = max_surge
+            results["average_fare"] = avg_fare
+            print(f"Avg surge multiplier:   {avg_surge:.2f}x")
+            print(f"Max surge multiplier:   {max_surge:.2f}x")
+            print(f"Avg fare:               {avg_fare:.2f}")
+
         print("---------------------------\n")
         return results
 
@@ -335,6 +408,14 @@ def main():
     parser.add_argument("--output", default="simulation_summary.png")
     parser.add_argument("--no-plot", action="store_true",
                         help="Skip the PNG visualization (metrics only).")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Suppress the per-event log; show only the final analysis.")
+    parser.add_argument("--surge", action="store_true",
+                        help="Enable zone-based surge pricing (extra credit).")
+    parser.add_argument("--surge-zones", type=int, default=4,
+                        help="Grid resolution per axis for surge zones.")
+    parser.add_argument("--surge-sensitivity", type=float, default=0.1)
+    parser.add_argument("--surge-cap", type=float, default=3.0)
     args = parser.parse_args()
 
     sim = Simulation(
@@ -345,6 +426,11 @@ def main():
         num_riders=args.num_riders,
         mean_arrival_time=args.mean_arrival,
         random_seed=args.random_seed,
+        verbose=not args.quiet,
+        surge_enabled=args.surge,
+        surge_zones=args.surge_zones,
+        surge_sensitivity=args.surge_sensitivity,
+        surge_cap=args.surge_cap,
     )
     sim.run()
     results = sim.analyze_results()
