@@ -1,4 +1,4 @@
-#A single rider in the simulation
+"""Represents a single rider in the simulation."""
 
 
 class Rider:
@@ -14,6 +14,10 @@ class Rider:
         self.request_time = None
         self.pickup_time = None
         self.dropoff_time = None
+
+        # Populated only when surge pricing is enabled.
+        self.fare = None
+        self.surge_multiplier = None
 
     def __str__(self):
         return (
