@@ -1,4 +1,4 @@
-# test_script.py
+# test_simulation.py
 """
 Repeatable demonstration of the required correctness checks. Runs small,
 seeded simulations and asserts the invariants hold after every event.
