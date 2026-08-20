@@ -50,8 +50,16 @@ def create_summary(sim, results, filename="simulation_summary.png"):
         f"Driver utilization: {results['driver_utilization_percent']:.1f}%",
         f"Trips per car:      {results['trips_per_car']:.2f}",
     ]
+    # Surge KPIs appear only when surge pricing was enabled for the run.
+    if "average_surge_multiplier" in results:
+        lines += [
+            "",
+            f"Avg surge:          {results['average_surge_multiplier']:.2f}x",
+            f"Max surge:          {results['max_surge_multiplier']:.2f}x",
+            f"Avg fare:           {results['average_fare']:.2f}",
+        ]
     ax_metrics.text(0.0, 1.0, "\n".join(lines), va="top", ha="left",
-                    family="monospace", fontsize=11, transform=ax_metrics.transAxes)
+                    family="monospace", fontsize=10.5, transform=ax_metrics.transAxes)
 
     # ----- chart 1: rider wait-time distribution -----
     ax_wait = fig.add_subplot(grid[1, 2])
